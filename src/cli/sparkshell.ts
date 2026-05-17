@@ -237,8 +237,15 @@ export function parseSparkShellFallbackInvocation(args: readonly string[]): Spar
     throw new Error(`Missing command to run.\n${SPARKSHELL_USAGE}`);
   }
 
-  if (args[0] === '--shell' || args[0]?.startsWith('--shell=')) {
-    return { kind: 'command', argv: [...args] };
+  if (args[0] === '--shell') {
+    const script = args[1];
+    if (!script) throw new Error(`--shell requires a command string.\n${SPARKSHELL_USAGE}`);
+    return { kind: 'command', argv: ['sh', '-lc', script] };
+  }
+  if (args[0]?.startsWith('--shell=')) {
+    const script = args[0].slice('--shell='.length);
+    if (!script.trim()) throw new Error(`--shell requires a command string.\n${SPARKSHELL_USAGE}`);
+    return { kind: 'command', argv: ['sh', '-lc', script] };
   }
 
   const paneStart = args.findIndex((arg) => arg === '--tmux-pane' || arg.startsWith('--tmux-pane='));

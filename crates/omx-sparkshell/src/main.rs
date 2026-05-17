@@ -101,26 +101,30 @@ fn run(args: Vec<String>) -> Result<(), SparkshellError> {
         _ => execute_command(&execution_argv)?,
     };
     let redacted = redact_output(&raw_output);
-    let output = redacted.output;
+    let output = if options.json {
+        &redacted.output
+    } else {
+        &raw_output
+    };
     let threshold = read_line_threshold();
     let line_count = combined_visible_lines(&output.stdout, &output.stderr);
-    let evidence = build_evidence(&options, &output);
-    let cache_meta = handle_cache(&options, &output, &evidence.raw_hash)?;
+    let evidence = build_evidence(&options, output);
+    let cache_meta = handle_cache(&options, output, &evidence.raw_hash)?;
 
     if options.json {
         let summary = if options.since_last {
-            since_last_summary(&output, cache_meta.as_ref(), options.budget)
+            since_last_summary(output, cache_meta.as_ref(), options.budget)
         } else if line_count <= threshold {
-            compact_text(&combined_text(&output), options.budget)
+            compact_text(&combined_text(output), options.budget)
         } else if cache_meta.as_ref().is_some_and(|meta| meta.cache_hit) {
             "unchanged since previous observation".to_string()
         } else {
-            summarize_output(&execution_argv, &output)
+            summarize_output(&execution_argv, output)
                 .unwrap_or_else(|error| format!("summary unavailable: {error}"))
         };
         write_json_report(
             &options,
-            &output,
+            output,
             &summary,
             &evidence,
             cache_meta,
@@ -134,7 +138,7 @@ fn run(args: Vec<String>) -> Result<(), SparkshellError> {
         process::exit(output.exit_code());
     }
 
-    match summarize_output(&execution_argv, &output) {
+    match summarize_output(&execution_argv, output) {
         Ok(summary) => {
             let mut stdout = io::stdout().lock();
             stdout.write_all(compact_text(&summary, options.budget).as_bytes())?;

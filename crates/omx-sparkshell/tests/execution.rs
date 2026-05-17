@@ -692,6 +692,27 @@ fn pane_json_cache_reports_hits_and_since_last_changes() {
 }
 
 #[test]
+fn raw_mode_preserves_non_utf8_bytes() {
+    let temp = unique_temp_dir("raw-non-utf8");
+    let script = temp.join("raw-bytes");
+    write_executable(
+        &script,
+        r#"#!/usr/bin/env bash
+printf '\xff\xfe\n'
+"#,
+    );
+
+    let output = Command::new(sparkshell_bin())
+        .arg(script)
+        .output()
+        .expect("run sparkshell");
+
+    assert!(output.status.success());
+    assert_eq!(output.stdout, vec![0xff, 0xfe, b'\n']);
+    let _ = fs::remove_dir_all(temp);
+}
+
+#[test]
 fn shell_mode_executes_explicit_shell_and_redacts_json_output() {
     let output = Command::new(sparkshell_bin())
         .arg("--json")
