@@ -63,6 +63,8 @@ The interview is governed by a deterministic clearance rule, not by subjective "
 - `answered_high_leverage_question_count >= 3` (at least three distinct high-leverage answers are on record), or every high-leverage question identified at intake has been answered (whichever comes first).
 
 Cap interview rounds at **5** to prevent runaway. If clearance is not reached by round 5, hand the remaining blockers to Oracle as explicitly carried-forward unresolved items.
+
+**Hostility / non-answer exit**: if the user's responses for a round contain refusal signals (1-2 character non-answers, dismissive `알아서` / "you decide" / "whatever" patterns, profanity-laden responses, or a `<turn_aborted>` on the prior turn), the round invalidates the answers — it does NOT increment `answered_high_leverage_question_count`, exits the interview loop immediately, and routes the unresolved gaps either to `<silent_absorption>` (for dismissive delegation) or back to the user (for anger / aborted turns). See `prometheus-strict-metis` `<hostility_detection>` for the full pattern list and routing rules.
 </Execution_Policy>
 
 <Steps>

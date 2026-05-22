@@ -271,6 +271,23 @@ describe('prometheus-strict clean-room contract', () => {
     assert.match(metis, /(?:TDD|test[\s-]?first)[\s\S]{0,300}(?:after[\s-]?implementation|post[\s-]?implementation|agent[\s-]?QA|none)/i, 'metis test-strategy decision must offer the canonical option set (TDD / test-after-implementation / agent-QA only / no automated tests)');
   });
 
+  it('detects user hostility or non-answer responses and exits the interview instead of incrementing the clearance count', () => {
+    const metis = readRepoFile(join(repoRoot, 'prompts', 'prometheus-strict-metis.md'));
+    const skill = readRepoFile(skillPath);
+
+    assert.match(metis, /<hostility_detection>[\s\S]+<\/hostility_detection>|hostil[\s\S]{0,40}detection|non[\s-]?answer[\s\S]{0,40}detection/i, 'metis must declare a hostility / non-answer detection block to exit the interview cleanly instead of consuming clearance budget');
+
+    assert.match(metis, /(?:1[\s\-]?2 char|single character|one[\s-]?character|trivially short)[\s\S]{0,300}(?:answer|response|reply)/i, 'metis hostility detection must flag 1-2 character / trivially short responses as non-answers');
+    assert.match(metis, /(?:알아서|figure it out|you decide|whatever)[\s\S]{0,200}(?:non[\s-]?answer|refusal|hostil|exit|escalate)/i, 'metis hostility detection must recognise dismissive "you decide / figure it out / 알아서" patterns as non-answers');
+    assert.match(metis, /(?:profanit|시발|fuck|swear|insult|f-word)[\s\S]{0,200}(?:non[\s-]?answer|refusal|hostil|exit|escalate)/i, 'metis hostility detection must recognise profanity-laden responses as hostility signals');
+
+    assert.match(metis, /(?:exit|terminate|abort|stop)[\s\S]{0,200}(?:interview|loop|round)/i, 'metis hostility detection must exit the interview loop, not continue asking');
+    assert.match(metis, /(?:escalate|hand off|return control|surface the [hH]ostility)[\s\S]{0,300}(?:user|caller|Oracle|carry[-\s]?forward)/i, 'metis hostility detection must escalate the unresolved decision back to the user or carry it forward, not silently swallow it');
+    assert.match(metis, /(?:do not increment|must not increment|does not count|invalidates? the (?:round|answer))/i, 'metis hostility detection must specify that hostile / non-answer responses do NOT count toward answered_high_leverage_question_count');
+
+    assert.match(skill, /(?:hostil|non[\s-]?answer|user (?:refus|reject|abort))[\s\S]{0,300}(?:exit|escalate|terminate|invalidate)/i, 'skill Rule-Based Clearance section must reflect the hostility exit path so the user sees the rule at the workflow level');
+  });
+
   it('enforces the strengthened operator contract: iterative interview, rule-clearance, post-plan Metis, Momus bounded retry, and Oracle 2-pass', () => {
     const skill = readRepoFile(skillPath);
     const metis = readRepoFile(join(repoRoot, 'prompts', 'prometheus-strict-metis.md'));

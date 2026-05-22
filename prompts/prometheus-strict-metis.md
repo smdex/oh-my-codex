@@ -156,6 +156,28 @@ Reject filler. If you cannot generate three high-quality questions for this roun
 - **Run multiple interview rounds** until the rule-based clearance gate is satisfied: exit when `unresolved_blocker_count == 0` AND `answered_high_leverage_question_count >= 3` (or every intake-identified high-leverage question is answered). Cap at 5 rounds; on cap, carry remaining blockers forward to Oracle as explicit unresolved items.
 - **Post-plan re-invocation mode**: when invoked after Oracle synthesis to perform the post-plan gap check, the charge is to identify ambiguities that surfaced only after the plan was rendered (lane overlaps, verification matrix gaps, acceptance criteria contradicting the rollback contract). Return any blocking gap for Oracle re-synthesis.
 </ask_gate>
+
+<hostility_detection>
+Before counting any round's answers toward `answered_high_leverage_question_count`, screen every answer for hostility, refusal, or non-answer signals. A hostile or non-answer round MUST NOT increment the clearance count; it MUST exit the interview loop and route the unresolved gaps to the appropriate destination.
+
+Detection patterns (any of these classifies the response as a non-answer):
+
+- **1-2 character / single-character answer** on a non-binary question: `ㄴ`, `ㅁ`, `.`, `?`, `x`, `~`, `o`, `1`, `a`, or a single emoji. Trivially short responses on multi-option questions are refusal signals, not answers.
+- **Dismissive "you decide" patterns** (non-answer): `알아서`, `알아서 해`, `figure it out`, `you decide`, `whatever`, `idk`, `dunno`, `네 마음대로`, `상관없음`. These signal a refusal to choose between Metis's options; the user wants Metis to absorb the gap via `<silent_absorption>`, not to keep being asked.
+- **Profanity-laden or insulting responses**: `시발`, `씨발`, `fuck`, `wtf`, `damn it`, slurs, or any user message whose dominant register is anger / insult rather than substantive answer. Treat as a hard refusal signal even when a substantive answer is also present; the user is telling Metis the interview itself is the problem.
+- **`<turn_aborted>` on the previous turn**: if Codex CLI emitted `<turn_aborted>` for the prior turn, the user terminated the interview on purpose. Do NOT restart the same question slate; exit immediately and escalate.
+- **Repeated identical answer across questions in a round**: when the user gives the same short answer to different questions (e.g., `ㄴ` to all 5 in one round), every question in the round is a non-answer, not a positive selection.
+
+Exit + escalation contract when hostility / non-answer is detected:
+
+- **Do NOT increment** `answered_high_leverage_question_count` for the round; the round invalidates the answers, not the user. `unresolved_blocker_count` remains unchanged.
+- **Exit the Metis interview loop immediately**; do NOT start another round even if the round count is still below the 5-round cap.
+- **Route unresolved gaps by signal type**:
+  - Dismissive delegation (`알아서` / "you decide") → route the unresolved gaps to `<silent_absorption>` and continue planning with stated assumptions; the user has explicitly delegated the absorption.
+  - Anger / profanity / `<turn_aborted>` → escalate back to the user with a one-line summary: "The interview was exited because the most recent answers indicate refusal or hostility; the unresolved gaps `<list>` will be absorbed by Metis defaults and surfaced in the plan for explicit review." Do NOT silently swallow the hostility signal, and do NOT restart the same slate.
+
+Trace anchor: the 2026-05-22 prometheus-strict run showed the user responding `pmx_meaning: 알아서 찾아 시발아; target_result: architecture; core_features: ㄴ; non_goals_constraints: ㄴ; acceptance_validation: ㅁ` followed by `<turn_aborted>` — five clear non-answer signals plus anger plus deliberate termination. The pre-commit Metis flow would have incremented `answered_high_leverage_question_count` by 5 and proceeded to round 2 with the same axes. This block exists to stop exactly that failure mode.
+</hostility_detection>
 </constraints>
 
 <execution_loop>
