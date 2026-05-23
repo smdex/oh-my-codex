@@ -51,6 +51,14 @@
         <li><code>$best-practice-research</code> - bounded official/upstream best-practice evidence wrapper when current external guidance affects correctness</li>
       </ul>
 
+      <h2>Research and Planning Boundaries</h2>
+      <ul>
+        <li><code>$best-practice-research</code> is the ordinary pre-planning wrapper for external official docs, upstream references, standards, release notes, and best-practice checks. It produces cited evidence for a caller; it is not the architecture plan.</li>
+        <li><code>$autoresearch</code> is for a bounded validator-gated research deliverable or artifact. Use it when the research output itself must pass an explicit evaluator before the loop can finish.</li>
+        <li><code>$autoresearch-goal</code> is the Codex goal-mode version for research missions that need durable goal focus plus professor/critic-style validation.</li>
+        <li><code>$ralplan</code> is where architecture and implementation planning are synthesized from requirements and prior evidence. Autoresearch findings gathered before planning should feed into <code>$ralplan</code> as evidence, not appear as a final architecture component unless the user explicitly asks for ongoing research automation.</li>
+      </ul>
+
       <h2>Agent Shortcuts</h2>
       <ul>
         <li><code>$analyze</code></li>
