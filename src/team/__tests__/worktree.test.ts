@@ -23,6 +23,14 @@ async function initRepo(): Promise<string> {
   return cwd;
 }
 
+async function initJjRepo(): Promise<string> {
+  const cwd = await mkdtemp(join(tmpdir(), 'omx-jj-workspace-test-'));
+  execFileSync('jj', ['git', 'init', '--no-colocate', cwd], { stdio: 'ignore' });
+  await writeFile(join(cwd, 'README.md'), 'hello\n', 'utf-8');
+  execFileSync('jj', ['describe', '-m', 'init'], { cwd, stdio: 'ignore' });
+  return cwd;
+}
+
 function branchExists(repoRoot: string, branch: string): boolean {
   try {
     execFileSync('git', ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`], { cwd: repoRoot, stdio: 'ignore' });
@@ -112,6 +120,44 @@ describe('worktree planning', () => {
 });
 
 describe('worktree ensure + rollback', () => {
+  it('creates and reuses jj workspaces without using git worktrees', async () => {
+    const repo = await initJjRepo();
+    try {
+      const planned = planWorktreeTarget({
+        cwd: repo,
+        scope: 'team',
+        mode: { enabled: true, detached: false, name: 'feat' },
+        teamName: 'jj-team',
+        workerName: 'worker-1',
+      });
+      assert.equal(planned.enabled, true);
+      if (!planned.enabled) return;
+      assert.equal(planned.vcs, 'jj');
+
+      const created = ensureWorktree(planned);
+      assert.equal(created.enabled, true);
+      if (!created.enabled) return;
+      assert.equal(created.vcs, 'jj');
+      assert.equal(created.created, true);
+      assert.equal(created.createdBranch, false);
+      assert.equal(existsSync(join(created.worktreePath, '.jj')), true);
+
+      const gitWorktreeList = execFileSync('git', ['--git-dir', join(repo, '.jj', 'repo', 'store', 'git'), 'worktree', 'list', '--porcelain'], {
+        encoding: 'utf-8',
+      });
+      assert.doesNotMatch(gitWorktreeList, /worker-1/);
+
+      const reused = ensureWorktree(planned);
+      assert.equal(reused.enabled, true);
+      if (!reused.enabled) return;
+      assert.equal(reused.vcs, 'jj');
+      assert.equal(reused.reused, true);
+      assert.equal(reused.created, false);
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
   it('creates and reuses detached worktree idempotently', async () => {
     const repo = await initRepo();
     try {
