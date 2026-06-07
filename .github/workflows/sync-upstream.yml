@@ -1,0 +1,26 @@
+name: Rebase Upstream
+
+on:
+  schedule:
+    # once a week
+    - cron: "0 8 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  rebase:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 20
+
+      - name: Rebase onto upstream
+        uses: imba-tjd/rebase-upstream-action@master
+        with:
+          upstream: Yeachan-Heo/oh-my-codex
+          branch: main
