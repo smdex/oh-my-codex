@@ -3,7 +3,7 @@ name: Rebase Upstream
 on:
   schedule:
     # once a week
-    - cron: "0 8 * * *"
+    - cron: "0 8,14,18 * * *"
   workflow_dispatch:
 
 permissions:
