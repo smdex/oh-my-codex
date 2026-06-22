@@ -6,10 +6,11 @@ This package is the planned desktop VS Code surface for OMX, landed in small rev
 
 This layer wires these commands to the shared direct-session API:
 
-- `OMX: Start Direct Session`, `OMX: Resume Direct Session`, `OMX: Stop Active Session`, `OMX: Run Doctor`
+- `OMX: Open Chat`, `OMX: Start Direct Session`, `OMX: Resume Direct Session`
+- `OMX: Stop Active Session`, `OMX: Run Doctor`
 
-Chat, Control Center, Log Explorer, Activity Bar views, and dashboard webviews
-are follow-up PRs after their core APIs and tests.
+Control Center, Log Explorer, Activity Bar views, and dashboard webviews are
+follow-up PRs after their core APIs and tests.
 
 ## Design constraints
 

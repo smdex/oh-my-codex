@@ -16,6 +16,11 @@
   "contributes": {
     "commands": [
       {
+        "command": "omx.openChat",
+        "title": "Open Chat",
+        "category": "OMX"
+      },
+      {
         "command": "omx.start",
         "title": "Start Direct Session",
         "category": "OMX"
