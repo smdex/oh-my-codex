@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -173,6 +173,68 @@ if [ -f "$CODEX_HOME/sessions/2026/06/17/rollout-runtime-session.jsonl" ]; then 
       assert.match(result.stdout, /fake-codex:resume\b/);
       assert.match(result.stdout, /codex-home:.*\.omx\/runtime\/codex-home\//);
       assert.match(result.stdout, /runtime-rollout-present=yes/);
+    } finally {
+      await rm(wd, { recursive: true, force: true });
+    }
+  });
+
+  it('merges symlinked project runtime history during plain resume', async () => {
+    const wd = await mkdtemp(join(tmpdir(), 'omx-resume-symlinked-runtime-history-'));
+    try {
+      const home = join(wd, 'home');
+      const projectCodexHome = join(wd, '.codex');
+      const previousRuntimeCodexHome = join(wd, '.omx', 'runtime', 'codex-home', 'omx-existing-runtime-a');
+      const duplicateRuntimeCodexHome = join(wd, '.omx', 'runtime', 'codex-home', 'omx-existing-runtime-b');
+      const fakeBin = join(wd, 'bin');
+      const fakeCodexPath = join(fakeBin, 'codex');
+      const fakePsPath = join(fakeBin, 'ps');
+      const projectRolloutPath = join(projectCodexHome, 'sessions', '2026', '06', '18', 'rollout-project-session.jsonl');
+
+      await mkdir(home, { recursive: true });
+      await mkdir(fakeBin, { recursive: true });
+      await mkdir(join(wd, '.omx'), { recursive: true });
+      await mkdir(dirname(projectRolloutPath), { recursive: true });
+      await mkdir(previousRuntimeCodexHome, { recursive: true });
+      await mkdir(duplicateRuntimeCodexHome, { recursive: true });
+      await writeFile(join(wd, '.omx', 'setup-scope.json'), JSON.stringify({ scope: 'project' }));
+      await writeFile(join(projectCodexHome, 'config.toml'), 'model = "gpt-5.5"\n');
+      await writeFile(projectRolloutPath, '{"type":"session_meta","payload":{"id":"project-session"}}\n');
+      await writeFile(join(projectCodexHome, 'history.jsonl'), '{"session_id":"project-session"}\n');
+      await writeFile(join(projectCodexHome, 'session_index.jsonl'), '{"id":"project-session"}\n');
+      await symlink(join(projectCodexHome, 'sessions'), join(previousRuntimeCodexHome, 'sessions'), 'dir');
+      await symlink(join(projectCodexHome, 'history.jsonl'), join(previousRuntimeCodexHome, 'history.jsonl'));
+      await symlink(join(projectCodexHome, 'session_index.jsonl'), join(previousRuntimeCodexHome, 'session_index.jsonl'));
+      await symlink(join(projectCodexHome, 'sessions'), join(duplicateRuntimeCodexHome, 'sessions'), 'dir');
+      await symlink(join(projectCodexHome, 'history.jsonl'), join(duplicateRuntimeCodexHome, 'history.jsonl'));
+      await symlink(join(projectCodexHome, 'session_index.jsonl'), join(duplicateRuntimeCodexHome, 'session_index.jsonl'));
+
+      await writeFile(fakeCodexPath, `#!/bin/sh
+printf 'fake-codex:%s\n' "$*"
+printf 'codex-home:%s\n' "$CODEX_HOME"
+printf 'history-lines:%s\n' "$(wc -l < "$CODEX_HOME/history.jsonl")"
+printf 'index-lines:%s\n' "$(wc -l < "$CODEX_HOME/session_index.jsonl")"
+if [ -f "$CODEX_HOME/sessions/2026/06/18/rollout-project-session.jsonl" ]; then echo project-rollout-present=yes; else echo project-rollout-present=no; fi
+`);
+      await chmod(fakeCodexPath, 0o755);
+      await writeFile(fakePsPath, '#!/bin/sh\nexit 0\n');
+      await chmod(fakePsPath, 0o755);
+
+      const result = runOmx(wd, ['resume'], {
+        HOME: home,
+        PATH: `${fakeBin}:/usr/bin:/bin`,
+        OMX_AUTO_UPDATE: '0',
+        OMX_NOTIFY_FALLBACK: '0',
+        OMX_HOOK_DERIVED_SIGNALS: '0',
+      });
+
+      assert.equal(result.status, 0, result.error || result.stderr || result.stdout);
+      assert.doesNotMatch(result.stderr, /EISDIR/);
+      assert.match(result.stdout, /fake-codex:resume\b/);
+      assert.match(result.stdout, /project-rollout-present=yes/);
+      assert.match(result.stdout, /history-lines:1\b/);
+      assert.match(result.stdout, /index-lines:1\b/);
+      assert.equal(await readFile(join(projectCodexHome, 'history.jsonl'), 'utf-8'), '{"session_id":"project-session"}\n');
+      assert.equal(await readFile(join(projectCodexHome, 'session_index.jsonl'), 'utf-8'), '{"id":"project-session"}\n');
     } finally {
       await rm(wd, { recursive: true, force: true });
     }
