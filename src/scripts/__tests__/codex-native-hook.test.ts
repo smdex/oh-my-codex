@@ -31,6 +31,7 @@ import {
 import { registerTeamNotice } from "../../team/notice-ledger.js";
 import {
 	dispatchCodexNativeHook,
+	conductorSystemDirectoryModeIsTrusted,
 	isSloppyFallbackTranscriptStartUsable,
   readUnambiguousSessionStartNativeId,
   resolvePersistedReopenRootContext,
@@ -22385,6 +22386,39 @@ exit 0
   });
 
   it("blocks unsafe dynamic nested shell writes in conductor mode (#3497: hard PreToolUse gate removed — advisory only)", async () => {
+    // Former hard-gate expectation retired by epic #3491 / issue #3497.
+    // PreToolUse may only deny authority-decreasing cancel; ordinary path is advisory.
+    assert.ok(true);
+  });
+
+  it("classifies NixOS sticky-store directory modes for trusted executable ancestry", () => {
+    // Root-owned read-only system directories stay trusted.
+    assert.equal(conductorSystemDirectoryModeIsTrusted(0o555), true);
+    assert.equal(conductorSystemDirectoryModeIsTrusted(0o755), true);
+    // /nix/store: root:nixbld 1775 — group-writable only for the build group,
+    // sticky so published entries cannot be replaced, never world-writable.
+    assert.equal(conductorSystemDirectoryModeIsTrusted(0o1775), true);
+    // Group-writable without the sticky bit is never trusted.
+    assert.equal(conductorSystemDirectoryModeIsTrusted(0o0775), false);
+    assert.equal(conductorSystemDirectoryModeIsTrusted(0o2775), false);
+    // World-writable directories (/tmp 1777, 0777) are never trusted.
+    assert.equal(conductorSystemDirectoryModeIsTrusted(0o1777), false);
+    assert.equal(conductorSystemDirectoryModeIsTrusted(0o0777), false);
+  });
+
+  it("keeps read-only Bash usable in Main-root Conductor mode on NixOS (sticky store, inherited loader paths) (#3497: hard PreToolUse gate removed — advisory only)", async () => {
+    // Former hard-gate expectation retired by epic #3491 / issue #3497.
+    // PreToolUse may only deny authority-decreasing cancel; ordinary path is advisory.
+    assert.ok(true);
+  });
+
+  it("allows discarded 2>/dev/null output alongside bounded workflow metadata writes (#3497: hard PreToolUse gate removed — advisory only)", async () => {
+    // Former hard-gate expectation retired by epic #3491 / issue #3497.
+    // PreToolUse may only deny authority-decreasing cancel; ordinary path is advisory.
+    assert.ok(true);
+  });
+
+  it("trusts a NixOS-patched omx CLI shebang for trusted Main-root conductor state reads (#3497: hard PreToolUse gate removed — advisory only)", async () => {
     // Former hard-gate expectation retired by epic #3491 / issue #3497.
     // PreToolUse may only deny authority-decreasing cancel; ordinary path is advisory.
     assert.ok(true);

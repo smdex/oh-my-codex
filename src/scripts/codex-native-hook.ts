@@ -5221,7 +5221,10 @@ function conductorMetadataWriteSizesStayBounded(cwd: string, command: string): b
     for (const match of redirectScanSegment.matchAll(/(?:^|[^<>])(?:[0-9]*)(<>|>>|>\||>&|>)\s*(["']?)([^\s&|;<>]+)\2/g)) {
       const operator = match[1] ?? "";
       const target = safeString(match[3]).trim();
-      if (!target || target === "-" || /^\d+$/.test(target)) continue;
+      // Discarded stderr/stdout (`2>/dev/null`) never grows a metadata leaf;
+      // the null device is a character device, so the lstat-based leaf size
+      // proof cannot apply and must not fail closed here.
+      if (!target || target === "-" || /^\d+$/.test(target) || isNullDeviceRedirectTarget(target)) continue;
       const key = keyFor(target);
       const current = readSize(target);
       if (!key || current === null) return false;
@@ -11706,6 +11709,58 @@ function isConductorDynamicLoaderEnvironmentName(name: string): boolean {
     || name === "SHLIB_PATH";
 }
 
+// Cached per process: the store root cannot change during a hook run.
+let conductorTrustedNixStoreRootCache: string | null | undefined;
+
+// The NixOS multi-user store root /nix/store: root-owned, sticky, optionally
+// group-writable for the nixbld build group, never world-writable (typically
+// mode 1775 root:nixbld). Store paths it already published cannot be replaced
+// by any unprivileged principal, so objects under it are system-controlled.
+function conductorTrustedNixStoreRoot(): string | null {
+  if (conductorTrustedNixStoreRootCache !== undefined) return conductorTrustedNixStoreRootCache;
+  let storeRoot: string | null = null;
+  try {
+    const store = statSync("/nix/store");
+    if (store.isDirectory() && store.uid === 0 && conductorSystemDirectoryModeIsTrusted(store.mode)) {
+      storeRoot = realpathSync("/nix/store");
+    }
+  } catch {
+    storeRoot = null;
+  }
+  conductorTrustedNixStoreRootCache = storeRoot;
+  return storeRoot;
+}
+
+// NixOS user shells routinely inherit dynamic-loader search paths that point
+// into the read-only Nix store (for example /nix/store/<hash>-portaudio/lib).
+// Such entries cannot host user-controlled loader objects, so an inherited
+// loader variable is safe only when every entry resolves inside the trusted
+// store root AND every ancestor directory up to / keeps the trusted system
+// shape (root-owned; group-writable only in the sticky store form). Relative,
+// missing, or workspace-local entries — and every value on hosts without a
+// trusted /nix/store — stay unsafe, preserving the fail-closed default.
+function conductorInheritedDynamicLoaderValueIsSafe(value: string): boolean {
+  const entries = value.split(conductorPathListDelimiter()).map((entry) => entry.trim()).filter(Boolean);
+  if (entries.length === 0) return true;
+  const storeRoot = conductorTrustedNixStoreRoot();
+  if (storeRoot === null) return false;
+  return entries.every((entry) => {
+    if (!isAbsolute(entry) || /[$`\\]/.test(entry)) return false;
+    try {
+      const canonical = realpathSync(resolve(entry));
+      if (canonical !== storeRoot && !canonical.startsWith(`${storeRoot}/`)) return false;
+      for (let directory = canonical; ; directory = dirname(directory)) {
+        const metadata = statSync(directory);
+        if (!metadata.isDirectory() || metadata.uid !== 0 || !conductorSystemDirectoryModeIsTrusted(metadata.mode)) return false;
+        const parent = dirname(directory);
+        if (parent === directory) return true;
+      }
+    } catch {
+      return false;
+    }
+  });
+}
+
 function commandHasAmbiguousDynamicLoaderControlFlow(command: string): boolean {
   const mentionsLoaderState = /\b(?:LD_[A-Z0-9_]+|DYLD_[A-Z0-9_]+|LIBPATH|SHLIB_PATH|loader)\b/.test(command);
   if (!mentionsLoaderState) return false;
@@ -11718,7 +11773,8 @@ function commandHasUnsafeDynamicLoaderEnvironment(command: string, depth = 0): b
   if (/\bcommand\s+export\s+[^;\n]*(?:LD_[A-Z0-9_]+|DYLD_[A-Z0-9_]+|LIBPATH|SHLIB_PATH)\b/.test(command)) return true;
   if (commandHasAmbiguousDynamicLoaderControlFlow(command)) return true;
   if (Object.entries(process.env).some(([name, value]) => (
-    isConductorDynamicLoaderEnvironmentName(name) && safeString(value).trim() !== ""
+    isConductorDynamicLoaderEnvironmentName(name)
+    && !conductorInheritedDynamicLoaderValueIsSafe(safeString(value))
   ))) return true;
   for (const words of splitShellCommandSegments(stripHeredocBodiesForCommandScan(command)).map(tokenizeConductorShellWords)) {
     for (const word of words) {
@@ -11735,6 +11791,10 @@ function commandHasUnsafeDynamicLoaderEnvironment(command: string, depth = 0): b
   const aliases = new Map<string, string | null>();
   for (const [name, value] of Object.entries(process.env)) {
     if (!isConductorDynamicLoaderEnvironmentName(name)) continue;
+    // Trusted Nix-store search paths are excluded from the tracked state: they
+    // cannot configure a loader-controlled runtime, so commands may still be
+    // positively classified as read-only on NixOS.
+    if (conductorInheritedDynamicLoaderValueIsSafe(safeString(value))) continue;
     values.set(name, value);
     exported.add(name);
   }
@@ -17504,6 +17564,21 @@ function conductorExecutableHasTrustedIdentity(
   return conductorTrustedScriptInterpreterIsSafe(canonical, state, rootCwd, depth, seen);
 }
 
+// NixOS keeps its system store directory as root:nixbld mode 1775: build
+// users may add NEW store entries only through the privileged nix daemon, and
+// the sticky bit prevents any unprivileged principal from replacing or
+// removing entries the store already published. A group-writable system
+// directory is therefore still system-controlled exactly in that shape —
+// root-owned, sticky, never world-writable — so executables resolved under it
+// (every /nix/store path) keep a trusted identity. Sticky world-writable
+// directories such as /tmp and non-sticky group-writable directories stay
+// untrusted, matching the previous fail-closed behavior on non-NixOS hosts.
+export function conductorSystemDirectoryModeIsTrusted(mode: number): boolean {
+  if ((mode & 0o002) !== 0) return false;
+  if ((mode & 0o020) === 0) return true;
+  return (mode & 0o1000) !== 0;
+}
+
 function conductorExecutableHasTrustedSystemIdentity(commandPath: string, rootCwd: string): boolean {
   try {
     const lexical = resolve(commandPath);
@@ -17517,7 +17592,7 @@ function conductorExecutableHasTrustedSystemIdentity(commandPath: string, rootCw
       // Symlink permission bits are always reported as writable on POSIX. Trust
       // a lexical alias only when its link ownership and every non-link path
       // component are system-controlled; its canonical target is checked below.
-      if (metadata.uid !== 0 || (!metadata.isSymbolicLink() && (metadata.mode & 0o022) !== 0)) return false;
+      if (metadata.uid !== 0 || (!metadata.isSymbolicLink() && !conductorSystemDirectoryModeIsTrusted(metadata.mode))) return false;
       const parent = dirname(path);
       if (parent === path) break;
     }
@@ -17525,11 +17600,13 @@ function conductorExecutableHasTrustedSystemIdentity(commandPath: string, rootCw
     const canonical = realpathSync(lexical);
     if (conductorPathIsInsideRoot(root, canonical)) return false;
     const executable = statSync(canonical);
+    // The executable leaf itself must stay non-writable: the sticky-bit store
+    // exception protects directory entries from replacement, not file content.
     if (!executable.isFile() || executable.uid !== 0 || (executable.mode & 0o022) !== 0) return false;
     accessSync(canonical, fsConstants.X_OK);
     for (let directory = dirname(canonical); ; directory = dirname(directory)) {
       const metadata = statSync(directory);
-      if (!metadata.isDirectory() || metadata.uid !== 0 || (metadata.mode & 0o022) !== 0) return false;
+      if (!metadata.isDirectory() || metadata.uid !== 0 || !conductorSystemDirectoryModeIsTrusted(metadata.mode)) return false;
       const parent = dirname(directory);
       if (parent === directory) return true;
     }
@@ -17841,12 +17918,29 @@ function conductorPackageCliNodeInterpreterIsTrusted(nodeCandidate: string, root
 }
 
 function conductorPackageCliHasTrustedNodeInterpreter(candidate: string, state: ShellPosixState, rootCwd: string): boolean {
+  let firstLine = "";
   try {
-    const firstLine = readFileSync(realpathSync(candidate), "utf-8").split(/\r?\n/, 1)[0] ?? "";
-    if (!/^#!\s*\/usr\/bin\/env\s+node\s*$/.test(firstLine)) return false;
+    firstLine = readFileSync(realpathSync(candidate), "utf-8").split(/\r?\n/, 1)[0] ?? "";
   } catch {
     return false;
   }
+  const shebang = firstLine.match(/^#!\s*([^\s]+)\s*([^#\r\n]*)$/);
+  const interpreter = shebang?.[1] ?? "";
+  const interpreterArguments = (shebang?.[2] ?? "").trim();
+  if (!interpreter || /[$`\\]/.test(interpreter)) return false;
+  if (interpreter !== "/usr/bin/env") {
+    // NixOS patches packaged CLI shebangs into absolute store interpreters such
+    // as `#!/nix/store/<hash>-nodejs-<version>/bin/node`. Trust that interpreter
+    // directly — only when it is named node and is itself a trusted executable
+    // (root-owned read-only store binary, or the hook's exact Node runtime) —
+    // so the unpatched `#!/usr/bin/env node` spelling is no longer the only
+    // trusted form. Any other interpreter, arguments, or spelling stays refused.
+    if (!isAbsolute(interpreter)) return false;
+    const interpreterName = shellWordBaseName(interpreter).toLowerCase();
+    if ((interpreterName !== "node" && interpreterName !== "node.exe") || interpreterArguments !== "") return false;
+    return conductorPackageCliNodeInterpreterIsTrusted(interpreter, rootCwd);
+  }
+  if (interpreterArguments !== "node") return false;
   const path = getConductorShellBinding(state, "PATH").value;
   if (!path || path === CONDUCTOR_UNKNOWN_SHELL_BINDING) return false;
   for (const entry of path.split(conductorPathListDelimiter())) {
@@ -17964,6 +18058,11 @@ function conductorCommandResolvesTrustedPackageCli(
 }
 
 const CONDUCTOR_PATH_INDEPENDENT_BUILTINS = new Set([
+  // `[` is the same regular Bash builtin as `test` (already listed) and, like
+  // every one-character command word, can never satisfy the bare-token PATH
+  // candidate matcher; without listing it every `if [ ... ]` condition is
+  // misreported as a Bash PATH mutation.
+  "[",
   ":", "break", "cd", "continue", "declare", "echo", "export", "false", "getopts", "local", "popd", "printf", "pushd", "read", "readonly", "return", "set", "shift", "shopt", "test", "true", "type", "unset", "wait",
 ]);
 
